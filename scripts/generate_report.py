@@ -462,14 +462,45 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
 
         pdf.ln(3)
         pdf.body(
-            "Key finding: The strategy achieves a Calmar ratio of 0.894 vs SPY's 0.666, "
-            "meaning it generates better return per unit of maximum drawdown. "
-            "Maximum drawdown of -7.6% vs -22.1% for SPY (65% less peak-to-trough pain). "
-            "The lower absolute return reflects the defensive regime overlay -- in periods "
-            "with elevated VIX or bear market conditions, the strategy reduces equity "
-            "exposure, which costs upside during the 2023-2025 AI bull market but would "
-            "have significantly protected capital during 2022's -20% drawdown."
+            "Key finding: The strategy achieves a Calmar ratio of 0.287 vs SPY's 0.439 "
+            "over the full 2018-2026 period (predominantly bull market). "
+            "Maximum drawdown of -22.6% vs -33.7% for SPY (33% less peak-to-trough pain). "
+            "The lower absolute return reflects the defensive regime overlay -- the strategy "
+            "is designed for capital preservation, not maximum alpha."
         )
+
+        # Bootstrap CIs
+        pdf.h2("Bootstrap Confidence Intervals (90%, Stationary Bootstrap)")
+        pdf.body(
+            "Stationary bootstrap (Politis-Romano 1994) resampling of daily returns "
+            "with automatic block length (1.75 * n^(1/3)). 500 replications. "
+            "Statistics marked YES are positive at the 90% confidence level."
+        )
+        try:
+            from backtest.bootstrap import bootstrap_metrics, format_ci_report
+            cis = bootstrap_metrics(backtest_result["equity_curve"], n_boot=500)
+            if cis:
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_fill_color(*NAVY)
+                pdf.set_text_color(*WHITE)
+                for h, w in zip(["Metric", "Point Est", "90% CI Lower", "90% CI Upper", "Sig"], [40, 30, 30, 30, 20]):
+                    pdf.cell(w, 6, h, fill=True)
+                pdf.ln()
+                pdf.set_text_color(*BLACK)
+                for i, (metric, d) in enumerate(cis.items()):
+                    fmt = ".1%" if metric in ("ann_return", "ann_vol", "max_dd") else ".3f"
+                    f = i % 2 == 0
+                    pdf.set_fill_color(*LGRAY)
+                    pdf.set_font("Helvetica", "", 8)
+                    sig_label = "YES" if d["significant"] else "---"
+                    pdf.cell(40, 5, metric, fill=f)
+                    pdf.cell(30, 5, f"{d['point']:{fmt}}", fill=f)
+                    pdf.cell(30, 5, f"{d['lower']:{fmt}}", fill=f)
+                    pdf.cell(30, 5, f"{d['upper']:{fmt}}", fill=f)
+                    pdf.cell(20, 5, sig_label, fill=f)
+                    pdf.ln()
+        except Exception as e:
+            pdf.body(f"Bootstrap CI unavailable: {e}")
 
     # ---- QUANTITATIVE ANALYSIS ----
     pdf.add_page()
