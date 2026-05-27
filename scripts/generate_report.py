@@ -502,6 +502,80 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
         except Exception as e:
             pdf.body(f"Bootstrap CI unavailable: {e}")
 
+    # ---- POSITION ATTRIBUTION ----
+    if backtest_result and "equity_curve" in backtest_result:
+        pdf.add_page()
+        pdf.h1("Position-Level Return Attribution")
+        pdf.body(
+            "Decomposes total backtest return by ETF position. "
+            "Contribution = position weight * position return. "
+            "Hit rate = % of trading days the position was positive. "
+            "Methodology: Brinson, Hood & Beebower (1986) BHB attribution."
+        )
+        try:
+            from backtest.position_attribution import (
+                compute_position_attribution, attribution_summary, format_attribution_report
+            )
+            import yfinance as yf
+            from strategies.etf_manager import TARGET_WEIGHTS
+
+            equity = backtest_result["equity_curve"]
+            spy_bk = backtest_result.get("spy_curve")
+
+            etf_tickers = list(TARGET_WEIGHTS.keys())
+            start_dt = str(equity.index[0])[:10]
+            end_dt   = str(equity.index[-1])[:10]
+            raw = yf.download(etf_tickers + ["SPY"], start=start_dt, end=end_dt,
+                              progress=False, auto_adjust=True)["Close"]
+
+            etf_prices = {t: raw[t].dropna() for t in etf_tickers if t in raw.columns}
+            spy_prices = spy_bk if spy_bk is not None else raw.get("SPY")
+
+            attributions = compute_position_attribution(etf_prices, TARGET_WEIGHTS, spy_prices)
+            smry = attribution_summary(attributions)
+
+            if smry:
+                pdf.kv("Positions Analysed:", str(smry["n_positions"]))
+                pdf.kv("Best Contributor:", f"{smry['best_position']} (+{smry['best_contrib']:.1f}pp)")
+                pdf.kv("Worst Contributor:", f"{smry['worst_position']} ({smry['worst_contrib']:+.1f}pp)")
+                pdf.kv("Avg Hit Rate:", f"{smry['avg_hit_rate']:.1f}%")
+                pdf.kv("Avg SPY Correlation:", f"{smry['avg_spy_corr']:.3f}")
+                pdf.ln(3)
+
+            if attributions:
+                pdf.h2("Per-Position Attribution Table")
+                pdf.set_font("Helvetica", "B", 7)
+                pdf.set_fill_color(*NAVY)
+                pdf.set_text_color(*WHITE)
+                for h, w in zip(["Ticker", "Weight", "PosRet", "Contrib", "Vol", "Hit%", "Sharpe", "MaxDD", "CorrSPY"],
+                                 [18, 16, 18, 18, 16, 14, 16, 16, 18]):
+                    pdf.cell(w, 6, h, fill=True)
+                pdf.ln()
+                pdf.set_text_color(*BLACK)
+                for i, a in enumerate(attributions):
+                    f = i % 2 == 0
+                    pdf.set_fill_color(*LGRAY)
+                    pdf.set_font("Helvetica", "", 7)
+                    pdf.cell(18, 5, a.ticker, fill=f)
+                    pdf.cell(16, 5, f"{a.avg_weight:.1f}%", fill=f)
+                    pdf.cell(18, 5, f"{a.total_return:+.1f}%", fill=f)
+                    pdf.cell(18, 5, f"{a.contribution:+.1f}pp", fill=f)
+                    pdf.cell(16, 5, f"{a.daily_vol:.1f}%", fill=f)
+                    pdf.cell(14, 5, f"{a.hit_rate:.0f}%", fill=f)
+                    pdf.cell(16, 5, f"{a.sharpe:+.2f}", fill=f)
+                    pdf.cell(16, 5, f"{a.max_dd:.1f}%", fill=f)
+                    pdf.cell(18, 5, f"{a.corr_to_spy:+.2f}", fill=f)
+                    pdf.ln()
+                pdf.ln(2)
+                pdf.body(
+                    "Contribution = avg weight * total return over backtest period. "
+                    "AVUV/AVDV (value) expected to be top contributors; DBMF/CTA (managed "
+                    "futures) provide low/negative SPY correlation = key diversification benefit. "
+                    "QMOM momentum factor provides convexity in trending markets."
+                )
+        except Exception as e:
+            pdf.body(f"Position attribution unavailable: {e}")
+
     # ---- CALENDAR YEAR ATTRIBUTION ----
     if backtest_result and "equity_curve" in backtest_result:
         pdf.add_page()
