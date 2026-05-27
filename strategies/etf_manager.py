@@ -20,6 +20,7 @@ import config
 from core import data as mdata
 from core.regime import regime_summary
 from core.utils import load_state, save_state, now_utc, clip
+from core.momentum_timing import spy_time_series_momentum, combined_regime_signal
 from execution.alpaca_client import AlpacaClient
 from execution.order_manager import OrderManager
 
@@ -277,6 +278,14 @@ def run_etf_manager(
     reg = regime_summary(spy_hist, vix_hist)
     regime = reg["regime"]
 
+    # Momentum timing (secondary signal, logged but does not override regime weights)
+    spy_mom = spy_time_series_momentum(spy_hist)
+    combined = combined_regime_signal(regime, spy_mom["composite"])
+    logger.info(
+        "Momentum timing: composite=%+.2f%% signal=%s combined=%s",
+        spy_mom["composite"], spy_mom["signal"], combined,
+    )
+
     # B-SC scalar
     bsc = compute_bsc_scalar(qmom_prices)
 
@@ -287,13 +296,16 @@ def run_etf_manager(
     actions = rebalance(om, client, eff_weights, dry_run=dry_run)
 
     summary = {
-        "ts":           now_utc(),
-        "regime":       regime,
-        "bsc_scalar":   round(bsc, 3),
-        "eff_qmom_wt":  round(eff_weights.get("QMOM", 0) * 100, 1),
-        "vix":          reg["vix"],
-        "spy_mom_60d":  reg["spy_mom_60d"],
-        "actions":      actions,
+        "ts":              now_utc(),
+        "regime":          regime,
+        "bsc_scalar":      round(bsc, 3),
+        "eff_qmom_wt":     round(eff_weights.get("QMOM", 0) * 100, 1),
+        "vix":             reg["vix"],
+        "spy_mom_60d":     reg["spy_mom_60d"],
+        "mom_composite":   spy_mom["composite"],
+        "mom_signal":      spy_mom["signal"],
+        "combined_signal": combined,
+        "actions":         actions,
     }
 
     state = load_state(config.REBAL_FILE, {})
