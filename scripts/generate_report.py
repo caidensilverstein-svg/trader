@@ -1264,6 +1264,53 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
     except Exception as e:
         pdf.body(f"Trade journal unavailable: {e}")
 
+    # ---- ALPHA DECOMPOSITION ----
+    if backtest_result and "equity_curve" in backtest_result:
+        pdf.add_page()
+        pdf.h1("Alpha Decomposition & Information Ratio")
+        pdf.body(
+            "Decomposes returns into market beta (systematic) and alpha (skill-based). "
+            "Jensen (1968) alpha is the CAPM regression intercept. "
+            "Information Ratio = active return / tracking error. "
+            "Up/down capture ratios measure market timing quality. "
+            "Methodology: Jensen (1968), Grinold & Kahn (2000)."
+        )
+        try:
+            from backtest.alpha_decomposition import compute_alpha_metrics, format_alpha_report
+            equity = backtest_result["equity_curve"]
+            spy    = backtest_result.get("spy_curve")
+
+            if spy is not None and len(spy) > 100:
+                port_rets  = equity.pct_change().dropna()
+                bench_rets = spy.reindex(equity.index).ffill().pct_change().dropna()
+                idx = port_rets.index.intersection(bench_rets.index)
+                am = compute_alpha_metrics(port_rets.loc[idx], bench_rets.loc[idx])
+
+                sig = "*** statistically significant" if am.alpha_significant else "(not significant)"
+                pdf.kv("Jensen's Alpha (ann):", f"{am.jensen_alpha_pct:+.2f}%  {sig}")
+                pdf.kv("Alpha t-stat:", f"{am.alpha_t_stat:+.2f}")
+                pdf.kv("Market Beta:", f"{am.market_beta:+.3f}")
+                pdf.kv("R-squared:", f"{am.r_squared:.3f}")
+                pdf.kv("Active Return (ann):", f"{am.active_return_pct:+.2f}%")
+                pdf.kv("Tracking Error (ann):", f"{am.tracking_error_pct:.2f}%")
+                pdf.kv("Information Ratio:", f"{am.information_ratio:+.3f}  (> 0.5 = good; > 1.0 = exceptional)")
+                pdf.kv("Treynor Ratio:", f"{am.treynor_ratio:+.2f}")
+                pdf.kv("Up-Capture Ratio:", f"{am.up_capture:.1f}%")
+                pdf.kv("Down-Capture Ratio:", f"{am.down_capture:.1f}%")
+                pdf.kv("Timing Ratio (Up/Down):", f"{am.up_capture/am.down_capture:.2f}x  "
+                       f"({'FAVORABLE -- captures more up than down' if am.up_capture > am.down_capture else 'captures more down than up'})")
+                pdf.ln(3)
+                pdf.body(
+                    "Interpretation: Beta < 1 reflects the 25% defensive allocation (DBMF/CTA). "
+                    "Jensen's alpha measures value added beyond market exposure. "
+                    "Up-capture > down-capture is the ideal profile for risk-managed strategies. "
+                    "IR > 0.5 signals consistent skill-based active management."
+                )
+            else:
+                pdf.body("Alpha decomposition requires SPY benchmark data from backtest.")
+        except Exception as e:
+            pdf.body(f"Alpha decomposition unavailable: {e}")
+
     # ---- STRESS TESTS ----
     if backtest_result and "equity_curve" in backtest_result:
         pdf.add_page()
