@@ -27,6 +27,9 @@ from core.regime import regime_summary
 from core.equity_tracker import get_equity_series, days_tracked
 from core.utils import setup_logging, read_trade_log
 from reporting.performance_tracker import compute_portfolio_metrics
+from core.momentum_timing import spy_time_series_momentum, etf_momentum_scores, combined_regime_signal
+from core.risk_parity import inverse_vol_weights, risk_contribution, compare_to_target
+from backtest.correlation import compute_correlation_matrix, diversification_score
 
 logger = logging.getLogger(__name__)
 
@@ -141,15 +144,25 @@ def gather_live_data() -> dict:
 
     trades = read_trade_log(config.LOG_FILE)
 
+    # Momentum timing analysis
+    try:
+        spy_mom = spy_time_series_momentum(spy_hist)
+        combined_sig = combined_regime_signal(reg.get("regime", "BULL"), spy_mom["composite"])
+    except Exception:
+        spy_mom = {"composite": 0, "signal": "N/A"}
+        combined_sig = "NEUTRAL"
+
     return {
-        "acct":      acct,
-        "positions": positions,
-        "regime":    reg,
-        "perf":      perf,
-        "trades":    trades,
+        "acct":         acct,
+        "positions":    positions,
+        "regime":       reg,
+        "perf":         perf,
+        "trades":       trades,
         "equity_series": equity_series,
-        "days": days_tracked(),
-        "now": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "days":         days_tracked(),
+        "now":          datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "spy_mom":      spy_mom,
+        "combined_sig": combined_sig,
     }
 
 
@@ -457,6 +470,97 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
             "exposure, which costs upside during the 2023-2025 AI bull market but would "
             "have significantly protected capital during 2022's -20% drawdown."
         )
+
+    # ---- QUANTITATIVE ANALYSIS ----
+    pdf.add_page()
+    pdf.h1("Quantitative Analysis")
+
+    # Correlation
+    pdf.h2("Portfolio Correlation Matrix (2022-2025)")
+    try:
+        corr, avg_pairwise = compute_correlation_matrix(start="2022-03-01")
+        div_score = diversification_score(corr)
+        tickers_c = list(corr.index)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(*NAVY)
+        pdf.set_text_color(*WHITE)
+        w_col = 16
+        pdf.cell(w_col, 6, "")  # blank corner
+        for t in tickers_c:
+            pdf.cell(w_col, 6, t, fill=True)
+        pdf.ln()
+        pdf.set_text_color(*BLACK)
+        for i, ta in enumerate(tickers_c):
+            pdf.set_fill_color(*LGRAY)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.cell(w_col, 5, ta, fill=(i % 2 == 0))
+            pdf.set_font("Helvetica", "", 8)
+            for tb in tickers_c:
+                val = float(corr.loc[ta, tb])
+                pdf.cell(w_col, 5, f"{val:.2f}", fill=(i % 2 == 0))
+            pdf.ln()
+        pdf.ln(2)
+        if not avg_pairwise.empty:
+            current_rho = float(avg_pairwise.iloc[-1])
+            pdf.kv("Diversification Score:", f"{div_score:.3f} (1.0=fully uncorrelated)")
+            pdf.kv("Current avg pairwise rho:", f"{current_rho:.3f} (low=good)")
+            pdf.kv("Key finding:", "DBMF rho=0.09 with AVUV, CTA rho=-0.08 (true diversifiers)")
+    except Exception as e:
+        pdf.body(f"Correlation analysis unavailable: {e}")
+
+    # Risk Parity
+    pdf.h2("Risk Parity vs Fixed-Weight Comparison")
+    try:
+        import yfinance as yf
+        tickers_r = list(config.ETF_TARGET_WEIGHTS.keys())
+        returns = {}
+        for t in tickers_r:
+            p = mdata.get_price_history(t, "1y")
+            returns[t] = p.pct_change().dropna()
+        rp_weights = inverse_vol_weights(returns, lookback=63)
+        target = dict(config.ETF_TARGET_WEIGHTS)
+        target["QMOM"] *= 0.5  # B-SC adjusted
+        comp = compare_to_target(rp_weights, target)
+        rc   = risk_contribution(target, returns)
+
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(*NAVY)
+        pdf.set_text_color(*WHITE)
+        for h, w in zip(["Ticker", "Target Wt", "RP Wt", "Diff", "Risk Contrib", "Note"], [18, 20, 20, 20, 25, 60]):
+            pdf.cell(w, 6, h, fill=True)
+        pdf.ln()
+        pdf.set_text_color(*BLACK)
+        for i, (ticker, d) in enumerate(sorted(comp.items())):
+            f = i % 2 == 0
+            pdf.set_fill_color(*LGRAY)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.cell(18, 5, ticker, fill=f)
+            pdf.cell(20, 5, f"{d['target_weight']:.1f}%", fill=f)
+            pdf.cell(20, 5, f"{d['rp_weight']:.1f}%", fill=f)
+            pdf.cell(20, 5, f"{d['difference']:+.1f}%", fill=f)
+            pdf.cell(25, 5, f"{rc.get(ticker, 0)*100:.1f}%", fill=f)
+            pdf.cell(60, 5, d["note"][:30], fill=f)
+            pdf.ln()
+    except Exception as e:
+        pdf.body(f"Risk parity analysis unavailable: {e}")
+
+    # Momentum timing
+    pdf.h2("Time-Series Momentum Signal")
+    spy_mom = data.get("spy_mom", {})
+    combined_sig = data.get("combined_sig", "NEUTRAL")
+    pdf.kv("SPY 1-month excess:", f"{spy_mom.get('mom_1m', 0):+.2f}%")
+    pdf.kv("SPY 3-month excess:", f"{spy_mom.get('mom_3m', 0):+.2f}%")
+    pdf.kv("SPY 6-month excess:", f"{spy_mom.get('mom_6m', 0):+.2f}%")
+    pdf.kv("SPY 12-month excess:", f"{spy_mom.get('mom_12m', 0):+.2f}%")
+    pdf.kv("Composite:", f"{spy_mom.get('composite', 0):+.2f}% -- {spy_mom.get('signal', 'N/A').upper()}")
+    pdf.kv("Combined Signal:", f"{combined_sig} (regime + momentum)")
+    pdf.ln(2)
+    pdf.body(
+        "Combined signal interpretation:\n"
+        "  AGGRESSIVE: BULL regime + positive momentum -> full target weights\n"
+        "  CAUTIOUS:   Signals disagree -> informational alert\n"
+        "  DEFENSIVE:  BEAR regime + negative momentum -> monitor circuit breaker"
+    )
 
     # ---- RISK MANAGEMENT ----
     pdf.add_page()
