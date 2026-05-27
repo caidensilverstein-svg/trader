@@ -1624,6 +1624,67 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
         except Exception as e:
             pdf.body(f"MVO analysis unavailable: {e}")
 
+    # ---- EXPECTED RETURN FORECASTS ----
+    pdf.add_page()
+    pdf.h1("Multi-Factor Expected Return Forecasts")
+    pdf.body(
+        "Forward-looking expected return estimates for each ETF based on academic factor premia. "
+        "Unlike naive historical means (used in MVO), these estimates use long-run factor premia "
+        "from academic literature -- more stable out-of-sample (Ilmanen 2011). "
+        "Sources: Fama-French (1993), Jegadeesh-Titman (1993), Asness et al. (2019), "
+        "Damodaran (2020) implied equity risk premium."
+    )
+    try:
+        from core.expected_returns import compute_expected_returns, portfolio_expected_return
+        import config as _cfg3
+        from core.regime import get_regime
+        import core.data as _mdat3
+
+        _etf_tickers = [k for k in _cfg3.ETF_WEIGHTS.keys() if k != "CASH"]
+        _regime = data.get("regime", "BULL") if data else "BULL"
+
+        er_list = compute_expected_returns(_etf_tickers, rf=0.043, regime=_regime)
+        port_er = portfolio_expected_return(_cfg3.ETF_WEIGHTS, rf=0.043, regime=_regime)
+
+        # Summary table
+        pdf.h2(f"Per-ETF Expected Return (Regime: {_regime})")
+        pdf.set_font("Courier", "", 8)
+        hdr = f"{'Ticker':<8} {'RF':>6} {'FactorPrem':>11} {'ExpRet':>8} {'RegAdj':>8} {'AdjRet':>9} {'+-1sig':>7}"
+        pdf.cell(0, 5, hdr, ln=True)
+        pdf.set_font("Courier", "", 7)
+        for er in er_list:
+            line = (
+                f"{er.ticker:<8} "
+                f"{er.risk_free_rate*100:>5.1f}% "
+                f"{er.factor_premium*100:>10.2f}% "
+                f"{er.expected_return*100:>7.2f}% "
+                f"{er.regime_adj*100:>+7.2f}% "
+                f"{er.adjusted_return*100:>8.2f}% "
+                f"+-{er.confidence_band*100:.1f}%"
+            )
+            pdf.cell(0, 4, line, ln=True)
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "", 9)
+
+        if port_er:
+            pdf.kv("Portfolio Blended E[R]:",
+                   f"{port_er['portfolio_er']*100:.2f}%  (RF {port_er['risk_free_rate']*100:.1f}% + factor premium)")
+            pdf.kv("Factor Premium:",      f"{port_er['factor_premium']*100:.2f}%")
+            pdf.kv("Regime Adjustment:",   f"{port_er['regime_adj']*100:+.2f}%  ({_regime})")
+            pdf.kv("Assumed Portfolio Vol:", f"{port_er['assumed_vol']*100:.1f}%  (from backtest)")
+            pdf.kv("Estimated Sharpe:",    f"{port_er['sharpe_estimate']:.3f}")
+            pdf.ln(2)
+
+        pdf.body(
+            "Interpretation: AVUV/AVDV lead on value + size premia (30/65/75 bps). "
+            "QMOM earns momentum + quality premium (40/60 bps loading). "
+            "DBMF/CTA earn trend-following momentum at low equity correlation. "
+            "Regime adjustment: BULL adds ~1% to equity ETFs; BEAR_CRISIS subtracts ~4%. "
+            "Confidence bands are wide (3-6% sigma) -- factor premia are probabilistic, not deterministic."
+        )
+    except Exception as e:
+        pdf.body(f"Expected return forecasts unavailable: {e}")
+
     # ---- ALPHA DECOMPOSITION ----
     if backtest_result and "equity_curve" in backtest_result:
         pdf.add_page()
@@ -2276,7 +2337,7 @@ def build_slides(data: dict, backtest_result: dict = None) -> FPDF:
         "Risk management: Circuit breaker | VaR/CVaR | Kelly sizing | Diversification\n"
         "Statistical validation: Bootstrap CIs | Monte Carlo | Sensitivity analysis\n"
         "Regime intelligence: 5-regime classification + Markov persistence model\n\n"
-        "635 unit tests | 44.4 KB comprehensive PDF report (27+ sections) | Live Alpaca\n"
+        "664 unit tests | 45.4 KB comprehensive PDF report (28+ sections) | Live Alpaca\n"
         "Automated cron execution | NDJSON trade log | Atomic state writes\n\n"
         "Academic: B-SC (2015), Fama-French (1993/2015), Amihud (2002), Kyle (1985),\n"
         "  Hamilton (1989), Politis-Romano (1994), BIS (2005), Black-Scholes (1973),\n"
