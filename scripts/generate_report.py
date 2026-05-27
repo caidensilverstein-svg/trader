@@ -648,6 +648,67 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
     except Exception as e:
         pdf.body(f"Sensitivity analysis unavailable: {e}")
 
+    # ---- REGIME TRANSITIONS ----
+    pdf.add_page()
+    pdf.h1("Regime Transition Analysis (Empirical Markov Chain)")
+    pdf.body(
+        "First-order Markov chain estimated from 40 regime observations "
+        "(monthly, 2018-2026). Transition matrix P[i,j] = P(next=j | current=i). "
+        "Methodology: Hamilton (1989) regime-switching framework."
+    )
+    if backtest_result:
+        try:
+            from core.regime_transitions import (
+                compute_transition_matrix, expected_dwell_time,
+                stationary_distribution, regime_persistence_score, REGIMES,
+            )
+            tl = backtest_result.get("trade_log", [])
+            reg_seq = [t.get("regime") for t in tl if t.get("regime")]
+
+            if reg_seq:
+                tm    = compute_transition_matrix(reg_seq)
+                dwell = expected_dwell_time(tm)
+                stat  = stationary_distribution(tm)
+
+                # Transition matrix table
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_fill_color(*NAVY)
+                pdf.set_text_color(*WHITE)
+                col_w = 26
+                pdf.cell(col_w, 6, "From \\ To")
+                for r in REGIMES:
+                    pdf.cell(col_w, 6, r[:8], fill=True)
+                pdf.cell(22, 6, "Dwell", fill=True)
+                pdf.ln()
+                pdf.set_text_color(*BLACK)
+                for i, fr in enumerate(REGIMES):
+                    f = i % 2 == 0
+                    pdf.set_fill_color(*LGRAY)
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.cell(col_w, 5, fr[:8], fill=f)
+                    pdf.set_font("Helvetica", "", 8)
+                    for to in REGIMES:
+                        v = tm.get(fr, {}).get(to, 0)
+                        pdf.cell(col_w, 5, f"{v:.2f}", fill=f)
+                    dw = dwell.get(fr, 0)
+                    pdf.cell(22, 5, f"{dw:.1f}mo" if dw != float('inf') else "inf", fill=f)
+                    pdf.ln()
+
+                pdf.ln(3)
+                pdf.h2("Long-Run Stationary Distribution")
+                for r in REGIMES:
+                    pdf.kv(f"{r}:", f"{stat.get(r, 0):.1%} of trading time")
+
+                pdf.ln(2)
+                reg = data.get("regime_data", {})
+                curr_regime = reg.get("regime", "BULL")
+                persist = regime_persistence_score(curr_regime, tm)
+                pdf.kv("Current Regime:", curr_regime)
+                pdf.kv("Persistence Prob:", f"{persist:.1%} (probability regime continues next month)")
+                pdf.kv("Expected Dwell:", f"{dwell.get(curr_regime, 0):.1f} months at current regime")
+        except Exception as e:
+            pdf.body(f"Regime transition analysis unavailable: {e}")
+
     # ---- RISK MANAGEMENT ----
     pdf.add_page()
     pdf.h1("Risk Management Framework")
