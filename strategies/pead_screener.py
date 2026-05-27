@@ -230,14 +230,66 @@ def score_candidate(ticker: str) -> Optional[Dict]:
     }
 
 
+def get_recent_earners(universe: List[str], lookback_days: int = 7) -> List[str]:
+    """
+    Filter the universe to tickers that reported earnings in the last `lookback_days`.
+
+    Uses yfinance calendar to check recent earnings dates. Falls back to the
+    full universe if fewer than 5 recent reporters are found.
+    """
+    from datetime import date
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=lookback_days)
+    recent = []
+
+    for ticker in universe:
+        try:
+            cal = yf.Ticker(ticker).calendar
+            if not cal or "Earnings Date" not in cal:
+                continue
+            dates = cal["Earnings Date"]
+            if not dates:
+                continue
+            # dates may be a list or a single value
+            if not isinstance(dates, list):
+                dates = [dates]
+            # Keep if any earnings date falls in lookback window
+            for d in dates:
+                try:
+                    if hasattr(d, "date"):
+                        ed = d.date()
+                    elif isinstance(d, str):
+                        ed = date.fromisoformat(d[:10])
+                    else:
+                        ed = d
+                    if cutoff <= ed <= datetime.now(timezone.utc).date():
+                        recent.append(ticker)
+                        break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    if len(recent) < 5:
+        logger.info("Only %d recent earners found; scanning full universe", len(recent))
+        return universe
+
+    logger.info("Filtered to %d recent earners from %d universe tickers", len(recent), len(universe))
+    return recent
+
+
 def get_pead_candidates(max_candidates: int = 10) -> List[Dict]:
     """
     Scan the universe and return top PEAD candidates sorted by composite score.
+
+    First filters to tickers that reported earnings in the last 7 days,
+    then runs the full composite scoring on each.
     """
-    logger.info("Scanning PEAD universe (%d tickers)…", len(SCREENER_UNIVERSE))
+    # Filter to recent reporters to save time and reduce noise
+    scan_list = get_recent_earners(SCREENER_UNIVERSE, lookback_days=7)
+    logger.info("Scanning PEAD universe (%d tickers)…", len(scan_list))
     candidates = []
 
-    for ticker in SCREENER_UNIVERSE:
+    for ticker in scan_list:
         try:
             result = score_candidate(ticker)
             if result:
