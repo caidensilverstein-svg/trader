@@ -1821,6 +1821,61 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
         except Exception as e:
             pdf.body(f"Correlation regime analysis unavailable: {e}")
 
+    # ---- SHARPE DECOMPOSITION ----
+    if backtest_result and "etf_prices" in backtest_result:
+        pdf.add_page()
+        pdf.h1("Sharpe Ratio Decomposition")
+        pdf.body(
+            "Decomposes portfolio Sharpe ratio into per-asset contributions. "
+            "Shows which ETFs drive risk-adjusted returns and how much of the "
+            "portfolio Sharpe comes from diversification vs individual asset quality. "
+            "Methodology: Sharpe (1994), Lo (2002) statistics of Sharpe ratios, "
+            "Grinold-Kahn (2000) active portfolio management."
+        )
+        try:
+            from backtest.sharpe_decomposition import compute_sharpe_decomposition, format_sharpe_decomposition
+            import config as _cfg5
+
+            etf_prices = backtest_result["etf_prices"]
+            cap_wts = {k: v for k, v in _cfg5.ETF_WEIGHTS.items() if k in etf_prices.columns}
+
+            sd = compute_sharpe_decomposition(etf_prices, cap_wts)
+
+            pdf.kv("Portfolio Sharpe Ratio:", f"{sd.portfolio_sharpe:.3f}")
+            pdf.kv("Max Achievable Sharpe:", f"{sd.max_achievable_sharpe:.3f}  (if all assets uncorrelated)")
+            pdf.kv("Diversification Gain:", f"{sd.diversification_gain:+.3f}  (portfolio vs weighted standalone)")
+            pdf.kv("Sharpe Efficiency:", f"{sd.sharpe_efficiency:.1f}%  (actual vs max achievable)")
+            pdf.kv("Dominant Contributor:", sd.dominant_contributor)
+            pdf.ln(3)
+
+            pdf.h2("Per-Asset Sharpe Contributions")
+            pdf.set_font("Courier", "", 8)
+            hdr = f"{'Asset':<10} {'Weight':>7} {'StdAlone':>10} {'WeightedSh':>12} {'CorrAdj':>9} {'PortContrib':>12}"
+            pdf.cell(0, 5, hdr, ln=True)
+            pdf.set_font("Courier", "", 7)
+            for a in sd.asset_contributions:
+                line = (
+                    f"{a.ticker:<10} "
+                    f"{a.weight*100:>6.1f}% "
+                    f"{a.standalone_sharpe:>10.3f} "
+                    f"{a.weighted_sharpe:>12.3f} "
+                    f"{a.correlation_adj:>+8.3f} "
+                    f"{a.portfolio_contrib:>11.3f}"
+                )
+                pdf.cell(0, 4, line, ln=True)
+            pdf.ln(3)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.body(
+                "StdAlone = Sharpe of this ETF in isolation. "
+                "WeightedSh = weight * standalone (before correlation benefit). "
+                "CorrAdj = how low correlation adds to (positive) or subtracts from portfolio Sharpe. "
+                "PortContrib = actual Sharpe contribution (all must sum to portfolio Sharpe). "
+                "DBMF/CTA with near-zero or negative correlation to equity improve portfolio Sharpe "
+                "even if their standalone Sharpe is lower than equity ETFs."
+            )
+        except Exception as e:
+            pdf.body(f"Sharpe decomposition unavailable: {e}")
+
     # ---- STRESS TESTS ----
     if backtest_result and "equity_curve" in backtest_result:
         pdf.add_page()
@@ -2430,7 +2485,7 @@ def build_slides(data: dict, backtest_result: dict = None) -> FPDF:
         "Risk management: Circuit breaker | VaR/CVaR | Kelly sizing | Diversification\n"
         "Statistical validation: Bootstrap CIs | Monte Carlo | Sensitivity analysis\n"
         "Regime intelligence: 5-regime classification + Markov persistence model\n\n"
-        "701 unit tests | 47.7 KB comprehensive PDF report (31+ sections) | Live Alpaca\n"
+        "717 unit tests | 48.6 KB comprehensive PDF report (32+ sections) | Live Alpaca\n"
         "Automated cron execution | NDJSON trade log | Atomic state writes\n\n"
         "Academic: B-SC (2015), Fama-French (1993/2015), Amihud (2002), Kyle (1985),\n"
         "  Hamilton (1989), Politis-Romano (1994), BIS (2005), Black-Scholes (1973),\n"
