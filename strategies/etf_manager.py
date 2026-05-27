@@ -137,8 +137,8 @@ def compute_drift(
 
 
 def needs_rebalance(drift: Dict[str, float]) -> bool:
-    """Return True if any ETF has drifted more than the threshold."""
-    return any(abs(d) > config.REBALANCE_DRIFT_THRESHOLD for d in drift.values())
+    """Return True if any ETF has drifted >= the threshold (inclusive)."""
+    return any(abs(d) >= config.REBALANCE_DRIFT_THRESHOLD for d in drift.values())
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ def rebalance(
     cash = acct["cash"]
 
     for ticker, d in sorted(drift.items(), key=lambda x: x[1]):
-        if d < -config.REBALANCE_DRIFT_THRESHOLD:
+        if d <= -config.REBALANCE_DRIFT_THRESHOLD:
             target_val  = target_weights[ticker] * total
             current_val = current_values.get(ticker, 0)
             buy_amount  = min(target_val - current_val, cash * 0.95)
@@ -229,8 +229,11 @@ def rebalance(
 
             logger.info("BUY %s  $%.2f (drift %+.1f%%)", ticker, buy_amount, d * 100)
             if not dry_run:
+                # ETFs: pass max_loss=0 to disable the per-trade risk cap.
+                # ETFs are diversified funds and cannot go to zero.
                 oid = om.buy_notional(ticker, buy_amount, "ETF_MANAGER",
-                                      f"rebalance drift {d*100:+.1f}%")
+                                      f"rebalance drift {d*100:+.1f}%",
+                                      max_loss=0)
                 actions[ticker] = "buy" if oid else "error"
                 cash -= buy_amount
             else:

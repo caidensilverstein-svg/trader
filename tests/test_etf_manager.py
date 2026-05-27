@@ -138,7 +138,7 @@ class TestDriftAndRebalance:
         drift = compute_drift(values, targets, 100_000)
         assert not needs_rebalance(drift)
 
-        # 23.6% = 5.6pp over -> clearly over threshold -> triggers
-        values = {"AVUV": 23_600}
+        # 23.0% = exactly 5pp over -> at threshold -> triggers (>= check)
+        values = {"AVUV": 23_000}
         drift = compute_drift(values, targets, 100_000)
         assert needs_rebalance(drift)
