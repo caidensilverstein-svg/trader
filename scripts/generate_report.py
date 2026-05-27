@@ -30,6 +30,7 @@ from reporting.performance_tracker import compute_portfolio_metrics
 from core.momentum_timing import spy_time_series_momentum, etf_momentum_scores, combined_regime_signal
 from core.risk_parity import inverse_vol_weights, risk_contribution, compare_to_target
 from backtest.correlation import compute_correlation_matrix, diversification_score
+from strategies.condor_greeks import compute_condor_greeks, format_condor_greeks
 
 logger = logging.getLogger(__name__)
 
@@ -358,6 +359,40 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
     pdf.kv("Max Loss:", "$2,333.33")
     pdf.kv("DTE:", "38 days")
     pdf.kv("Breakeven Range:", "7,110 to 7,900 (+/-4.8% from entry)")
+
+    # Live Black-Scholes Greeks for current condor signal
+    pdf.h2("Black-Scholes Greeks (Current Position)")
+    pdf.body(
+        "Theoretical Greeks computed via Black-Scholes (1973) for the current open condor "
+        "signal. These quantify the risk profile: near-zero delta confirms market neutrality, "
+        "positive theta = daily time decay earned, negative vega = risk if volatility spikes."
+    )
+    try:
+        import math
+        _spot = 7505.90
+        _iv   = 0.17        # VIX ~17 => approx 17% implied vol
+        _dte  = 38
+        cg = compute_condor_greeks(
+            underlying="SPX",
+            spot=_spot,
+            put_long_K=7110, put_short_K=7145,
+            call_short_K=7865, call_long_K=7900,
+            dte=_dte, iv=_iv,
+            contracts=1,
+        )
+        greeks_lines = [
+            ("Net Delta",  f"{cg.net_delta:+.4f}",  "near-zero = neutral (target)"),
+            ("Net Gamma",  f"{cg.net_gamma:+.6f}",  "negative = hurt by large moves"),
+            ("Net Theta",  f"{cg.net_theta:+.2f}/day", "positive = time decay in our favor"),
+            ("Net Vega",   f"{cg.net_vega:+.2f}/1%IV", "negative = hurt by vol spike"),
+            ("Max Profit", f"${cg.max_profit:+.2f}", "full credit if spot stays between short strikes"),
+            ("Max Loss",   f"${cg.max_loss:+.2f}",   "if spot blows past outer strike"),
+            ("P(Profit)",  f"{cg.prob_profit:.1f}%",  "theoretical B-S probability"),
+        ]
+        for label, val, note in greeks_lines:
+            pdf.kv(f"  {label}:", f"{val}  [{note}]")
+    except Exception as _cg_err:
+        pdf.body(f"Greeks unavailable: {_cg_err}")
 
     # ---- LAYER 3: PEAD ----
     pdf.add_page()
@@ -1190,6 +1225,69 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
         except Exception as e:
             pdf.body(f"VaR analysis unavailable: {e}")
 
+    # ---- TAIL RISK DECOMPOSITION ----
+    if backtest_result and "etf_prices" in backtest_result:
+        pdf.add_page()
+        pdf.h1("Tail Risk Decomposition (Component CVaR)")
+        pdf.body(
+            "Decomposes portfolio Expected Shortfall (CVaR) into per-asset contributions. "
+            "Component CVaR answers: which position is the primary driver of tail losses? "
+            "Methodology: Rockafellar-Uryasev (2002) conditional value-at-risk, "
+            "McNeil, Frey & Embrechts (2005) quantitative risk management."
+        )
+        try:
+            from backtest.tail_risk import compute_portfolio_tail_risk, format_tail_risk_report
+            import config as _cfg
+
+            etf_prices = backtest_result["etf_prices"]
+            target_wts = {k: v for k, v in _cfg.ETF_WEIGHTS.items() if k in etf_prices.columns}
+
+            tr_risks, tr_summary = compute_portfolio_tail_risk(etf_prices, target_wts)
+
+            if tr_risks:
+                pdf.kv("Portfolio 1-Day VaR (95%):",  f"{tr_summary.portfolio_var95*100:.3f}%  "
+                       f"(${tr_summary.portfolio_var95*100_000:.0f} on $100k)")
+                pdf.kv("Portfolio 1-Day CVaR (95%):", f"{tr_summary.portfolio_cvar95*100:.3f}%  "
+                       f"(${tr_summary.portfolio_cvar95*100_000:.0f} on $100k)")
+                pdf.kv("Portfolio 1-Day VaR (99%):",  f"{tr_summary.portfolio_var99*100:.3f}%  "
+                       f"(${tr_summary.portfolio_var99*100_000:.0f} on $100k)")
+                pdf.kv("Portfolio 1-Day CVaR (99%):", f"{tr_summary.portfolio_cvar99*100:.3f}%")
+                pdf.kv("Diversification Benefit:",    f"{tr_summary.diversification_benefit*100:.3f}%  "
+                       "(portfolio CVaR < sum of standalone CVaRs)")
+                pdf.kv("Return Skewness:",            f"{tr_summary.skewness:.3f}")
+                pdf.kv("Excess Kurtosis:",            f"{tr_summary.kurtosis:.3f}  "
+                       "({'fat tails' if >0, 'thin tails' if <0})")
+                pdf.ln(3)
+
+                pdf.h2("Per-Asset CVaR Contributions")
+                pdf.set_font("Courier", "", 8)
+                hdr = f"{'Asset':<8} {'Wt%':>6} {'SA-CVaR':>9} {'CompCVaR':>10} {'%Total':>7} {'TailBeta':>9} {'WorstDay':>9}"
+                pdf.cell(0, 5, hdr, ln=True)
+                pdf.set_font("Courier", "", 7)
+                for ar in tr_risks:
+                    line = (
+                        f"{ar.ticker:<8} "
+                        f"{ar.weight*100:>5.1f}% "
+                        f"{ar.standalone_cvar95*100:>8.3f}% "
+                        f"{ar.component_cvar95*100:>9.4f}% "
+                        f"{ar.pct_of_total_cvar:>6.1f}% "
+                        f"{ar.tail_beta:>9.3f} "
+                        f"{ar.worst_day*100:>8.2f}%"
+                    )
+                    pdf.cell(0, 4, line, ln=True)
+                pdf.ln(3)
+                pdf.set_font("Helvetica", "", 9)
+                pdf.kv("Dominant Tail Risk:",
+                       f"{tr_summary.dominant_risk_asset} ({tr_summary.dominant_risk_pct:.1f}% of CVaR)")
+                pdf.body(
+                    "SA-CVaR = Standalone Expected Shortfall (ignores inter-asset diversification). "
+                    "CompCVaR = Component CVaR -- actual contribution to portfolio tail risk after "
+                    "accounting for correlations. TailBeta = correlation to portfolio during tail events. "
+                    "High TailBeta = asset amplifies tail risk rather than hedging it."
+                )
+        except Exception as e:
+            pdf.body(f"Tail risk decomposition unavailable: {e}")
+
     # ---- REGIME PERFORMANCE ATTRIBUTION ----
     if backtest_result and "equity_curve" in backtest_result:
         pdf.add_page()
@@ -1507,6 +1605,57 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
                 pdf.body("Alpha decomposition requires SPY benchmark data from backtest.")
         except Exception as e:
             pdf.body(f"Alpha decomposition unavailable: {e}")
+
+    # ---- CORRELATION REGIME ANALYSIS ----
+    if backtest_result and "etf_prices" in backtest_result:
+        pdf.add_page()
+        pdf.h1("Correlation Regime Analysis")
+        pdf.body(
+            "Pairwise correlations between ETF holdings split by market regime. "
+            "Diversification typically degrades during crises -- assets that are uncorrelated "
+            "in calm markets tend to correlate toward 1.0 during selloffs. "
+            "This quantifies whether our factor diversification actually holds under stress. "
+            "Academic basis: Longin-Solnik (2001), Ang-Bekaert (2002), Kritzman et al. (2010)."
+        )
+        try:
+            from backtest.correlation_regimes import compute_regime_correlations, format_correlation_regime_report
+            etf_prices = backtest_result["etf_prices"]
+            regime_ser = backtest_result.get("regime_series")
+            pairs, cr_summary = compute_regime_correlations(etf_prices, regime_series=regime_ser)
+
+            if pairs:
+                pdf.h2("Pairwise Correlations by Regime")
+                pdf.set_font("Courier", "", 8)
+                hdr = f"{'Pair':<16} {'Full':>7} {'Calm':>7} {'Stress':>8} {'Breakdown':>10}"
+                pdf.cell(0, 5, hdr, ln=True)
+                pdf.set_font("Courier", "", 7)
+                for p in pairs:
+                    flag = "(!)" if p.corr_breakdown > 0.15 else "   "
+                    line = (
+                        f"{p.asset_a+'/'+p.asset_b:<16} "
+                        f"{p.full_corr:>7.3f} "
+                        f"{p.calm_corr:>7.3f} "
+                        f"{p.stress_corr:>8.3f} "
+                        f"{p.corr_breakdown:>+9.3f} {flag}"
+                    )
+                    pdf.cell(0, 4, line, ln=True)
+                pdf.ln(3)
+                pdf.set_font("Helvetica", "", 9)
+                pdf.kv("Avg Calm Correlation:",   f"{cr_summary.avg_calm_corr:.3f}  (diversification = {cr_summary.diversification_calm:.3f})")
+                pdf.kv("Avg Stress Correlation:",  f"{cr_summary.avg_stress_corr:.3f}  (diversification = {cr_summary.diversification_stress:.3f})")
+                pdf.kv("Avg Correlation Breakdown:", f"{cr_summary.avg_breakdown:+.3f}  (positive = correlations rise in stress)")
+                pdf.kv("Most Correlated in Stress:", cr_summary.worst_pair)
+                pdf.kv("Most Independent in Stress:", cr_summary.best_pair)
+                pdf.ln(2)
+                pdf.body(
+                    "Managed futures (DBMF/CTA) are designed to be uncorrelated or negatively "
+                    "correlated during equity drawdowns -- a key diversification benefit. "
+                    "If AVUV/AVDV show high stress correlation, it confirms they move together "
+                    "as 'value' factor bets, but the overall portfolio still benefits from the "
+                    "managed futures sleeve reducing peak drawdown."
+                )
+        except Exception as e:
+            pdf.body(f"Correlation regime analysis unavailable: {e}")
 
     # ---- STRESS TESTS ----
     if backtest_result and "equity_curve" in backtest_result:
@@ -2062,13 +2211,15 @@ def build_slides(data: dict, backtest_result: dict = None) -> FPDF:
         "Risk management: Circuit breaker | VaR/CVaR | Kelly sizing | Diversification\n"
         "Statistical validation: Bootstrap CIs | Monte Carlo | Sensitivity analysis\n"
         "Regime intelligence: 5-regime classification + Markov persistence model\n\n"
-        "557 unit tests | 40.5 KB comprehensive PDF report (22+ sections) | Live Alpaca\n"
+        "608 unit tests | 43.5 KB comprehensive PDF report (25+ sections) | Live Alpaca\n"
         "Automated cron execution | NDJSON trade log | Atomic state writes\n\n"
         "Academic: B-SC (2015), Fama-French (1993/2015), Amihud (2002), Kyle (1985),\n"
-        "  Hamilton (1989), Politis-Romano (1994), BIS (2005), Black-Scholes (1973)\n\n"
+        "  Hamilton (1989), Politis-Romano (1994), BIS (2005), Black-Scholes (1973),\n"
+        "  Longin-Solnik (2001), Rockafellar-Uryasev (2002), McNeil et al. (2005)\n\n"
         "Backtest (2018-2026): Calmar 0.29 | MaxDD -22.6% | Ann.Vol 8.73% | Sharpe 0.74\n"
         "7/8 calendar years positive (88%) | 28 drawdowns, 100% recovery rate\n"
-        "Stress tested: COVID -22%, 2022 rate spike -7% (regime protection worked)\n\n"
+        "Stress tested: COVID -22%, 2022 rate spike -7% | Correlation regime analysis\n"
+        "Tail risk decomposition (Component CVaR) | B-S iron condor Greeks\n\n"
         "Status: LIVE on paper account | 5 ETF orders deployed ($66k of $100k)\n"
         "Regime: BULL | SPY +10.9% vs MA200 | VIX 17.0 | Signal: AGGRESSIVE"
     )

@@ -246,11 +246,22 @@ def run_backtest(
     summary["total_costs_usd"] = round(sum(t.get("cost_usd", 0) for t in trade_log), 2)
     summary["cost_bps"]        = cost_bps
 
+    # Build regime series for downstream analysis
+    regime_dates  = [t["date"] for t in trade_log if "regime" in t]
+    regime_labels = [t["regime"] for t in trade_log if "regime" in t]
+    if regime_dates:
+        _reg_s = pd.Series(regime_labels, index=pd.to_datetime(regime_dates), name="regime")
+        regime_series = _reg_s.reindex(eq_series.index).ffill().bfill()
+    else:
+        regime_series = pd.Series("BULL", index=eq_series.index, name="regime")
+
     return {
-        "equity_curve": eq_series,
-        "spy_curve":    spy_curve,
-        "trade_log":    trade_log,
-        "summary":      summary,
+        "equity_curve":  eq_series,
+        "spy_curve":     spy_curve,
+        "trade_log":     trade_log,
+        "summary":       summary,
+        "etf_prices":    etf_prices,
+        "regime_series": regime_series,
     }
 
 
