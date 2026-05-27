@@ -593,6 +593,52 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
         "  DEFENSIVE:  BEAR regime + negative momentum -> monitor circuit breaker"
     )
 
+    # Factor Timing sub-section
+    pdf.h2("Factor Timing Adjustments (Asness et al. 2013)")
+    pdf.body(
+        "Individual ETF weights are tilted by 6-month momentum. "
+        "ETFs with negative 6-month return get 20% reduction; positive get 10% boost. "
+        "Weights re-normalized to preserve total sleeve allocation. "
+        "Floor: never below 50% of target weight."
+    )
+    try:
+        from core.factor_timing import compute_etf_momentum, apply_factor_timing
+        tickers_ft = list(config.ETF_TARGET_WEIGHTS.keys())
+        ft_prices  = {t: mdata.get_price_history(t, "1y") for t in tickers_ft}
+        ft_mom     = compute_etf_momentum(ft_prices)
+        eff_base   = dict(config.ETF_TARGET_WEIGHTS)
+        timed_w, mults = apply_factor_timing(eff_base, ft_mom)
+
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(*NAVY)
+        pdf.set_text_color(*WHITE)
+        for h, w in zip(["Ticker", "Base Wt", "6M Mom", "Multiplier", "Timed Wt", "Change"], [22, 22, 22, 26, 22, 22]):
+            pdf.cell(w, 6, h, fill=True)
+        pdf.ln()
+        pdf.set_text_color(*BLACK)
+        for i, ticker in enumerate(sorted(tickers_ft)):
+            f = i % 2 == 0
+            pdf.set_fill_color(*LGRAY)
+            pdf.set_font("Helvetica", "", 8)
+            bw   = eff_base.get(ticker, 0)
+            tw   = timed_w.get(ticker, 0)
+            mom  = ft_mom.get(ticker, 0)
+            mult = mults.get(ticker, 1.0)
+            diff = tw - bw
+            pdf.cell(22, 5, ticker, fill=f)
+            pdf.cell(22, 5, f"{bw*100:.1f}%", fill=f)
+            pdf.cell(22, 5, f"{mom*100:+.1f}%", fill=f)
+            pdf.cell(26, 5, f"{mult:.2f}x", fill=f)
+            pdf.cell(22, 5, f"{tw*100:.1f}%", fill=f)
+            pdf.cell(22, 5, f"{diff*100:+.1f}%", fill=f)
+            pdf.ln()
+        pdf.ln(2)
+        all_positive = all(v > 0 for v in ft_mom.values())
+        if all_positive:
+            pdf.body("All ETFs have positive 6-month momentum -> no active timing tilts today.")
+    except Exception as e:
+        pdf.body(f"Factor timing unavailable: {e}")
+
     # ---- SENSITIVITY ANALYSIS ----
     pdf.add_page()
     pdf.h1("Strategy Robustness: Parameter Sensitivity")
