@@ -923,6 +923,63 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
     except Exception as e:
         pdf.body(f"Sector exposure unavailable: {e}")
 
+    # ---- FACTOR MOMENTUM SIGNALS ----
+    if backtest_result and "etf_prices" in backtest_result:
+        pdf.add_page()
+        pdf.h1("Factor Momentum Signal History")
+        pdf.body(
+            "6-month composite momentum signal (70% 6m + 30% 12m skip 1m reversal) "
+            "for each ETF. Signals above +5% trigger weight boost (+10%), below -2% trigger "
+            "penalty (-20%). Information Coefficient (IC) measures signal predictive power. "
+            "Sources: Jegadeesh-Titman (1993), Asness et al. (2013), Novy-Marx (2012)."
+        )
+        try:
+            from core.factor_momentum_signal import compute_momentum_signals, compute_momentum_ic
+
+            etf_prices = backtest_result["etf_prices"]
+            mom_signals = compute_momentum_signals(etf_prices)
+
+            if mom_signals:
+                # Latest signals per ticker
+                latest_by_ticker: dict = {}
+                for s in mom_signals:
+                    if s.ticker not in latest_by_ticker or s.date > latest_by_ticker[s.ticker].date:
+                        latest_by_ticker[s.ticker] = s
+
+                pdf.h2("Current Momentum Signals")
+                pdf.set_font("Courier", "", 8)
+                hdr = f"{'Ticker':<10} {'6M Ret':>9} {'12M Ret':>9} {'Composite':>10} {'Signal':>8} {'Adj':>7}"
+                pdf.cell(0, 5, hdr, ln=True)
+                pdf.set_font("Courier", "", 7)
+                for ticker, s in sorted(latest_by_ticker.items(), key=lambda x: x[1].composite_score, reverse=True):
+                    line = (
+                        f"{ticker:<10} "
+                        f"{s.score_6m*100:>+8.2f}% "
+                        f"{s.score_12m*100:>+8.2f}% "
+                        f"{s.composite_score*100:>+9.2f}% "
+                        f"{s.signal:>8} "
+                        f"{s.weight_adj*100:>+6.0f}%"
+                    )
+                    pdf.cell(0, 4, line, ln=True)
+                pdf.ln(3)
+                pdf.set_font("Helvetica", "", 9)
+
+                # IC analysis (fast, limited observations)
+                try:
+                    ic = compute_momentum_ic(etf_prices, forward_window=21)
+                    if ic.n_observations > 0:
+                        pdf.h2("Signal Information Coefficient (IC) Analysis")
+                        pdf.kv("Observations:", str(ic.n_observations))
+                        pdf.kv("Mean IC:", f"{ic.ic_mean:.4f}  (positive = signal adds value)")
+                        pdf.kv("IC Std Dev:", f"{ic.ic_std:.4f}")
+                        pdf.kv("IC Information Ratio:", f"{ic.ic_ir:.3f}  (>0.3 = good signal quality)")
+                        pdf.kv("% Positive IC:", f"{ic.pct_positive_ic:.1f}%")
+                        pdf.kv("IC t-statistic:", f"{ic.ic_t_stat:.3f}  (>1.96 = statistically significant)")
+                except Exception:
+                    pass
+        except Exception as e:
+            pdf.body(f"Momentum signal history unavailable: {e}")
+
     # ---- FACTOR EXPOSURE DECOMPOSITION ----
     if backtest_result and "equity_curve" in backtest_result:
         pdf.add_page()
@@ -2532,7 +2589,7 @@ def build_slides(data: dict, backtest_result: dict = None) -> FPDF:
         "Risk management: Circuit breaker | VaR/CVaR | Kelly sizing | Diversification\n"
         "Statistical validation: Bootstrap CIs | Monte Carlo | Sensitivity analysis\n"
         "Regime intelligence: 5-regime classification + Markov persistence model\n\n"
-        "758 unit tests | 50.0 KB comprehensive PDF report (34+ sections) | Live Alpaca\n"
+        "758 unit tests | 51.3 KB comprehensive PDF report (35+ sections) | Live Alpaca\n"
         "Automated cron execution | NDJSON trade log | Atomic state writes\n\n"
         "Academic: B-SC (2015), Fama-French (1993/2015), Amihud (2002), Kyle (1985),\n"
         "  Hamilton (1989), Politis-Romano (1994), BIS (2005), Black-Scholes (1973),\n"
