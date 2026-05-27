@@ -2062,10 +2062,14 @@ def build_slides(data: dict, backtest_result: dict = None) -> FPDF:
         "Risk management: Circuit breaker | VaR/CVaR | Kelly sizing | Diversification\n"
         "Statistical validation: Bootstrap CIs | Monte Carlo | Sensitivity analysis\n"
         "Regime intelligence: 5-regime classification + Markov persistence model\n\n"
-        "282 unit tests | 22.7 KB comprehensive PDF report | Live Alpaca integration\n"
+        "557 unit tests | 40.5 KB comprehensive PDF report (22+ sections) | Live Alpaca\n"
         "Automated cron execution | NDJSON trade log | Atomic state writes\n\n"
-        "Backtest (2018-2026): Calmar 0.287 | MaxDD -22.6% | Ann.Vol 8.73%\n"
-        "Status: LIVE on paper account | 5 ETF orders pending market open\n"
+        "Academic: B-SC (2015), Fama-French (1993/2015), Amihud (2002), Kyle (1985),\n"
+        "  Hamilton (1989), Politis-Romano (1994), BIS (2005), Black-Scholes (1973)\n\n"
+        "Backtest (2018-2026): Calmar 0.29 | MaxDD -22.6% | Ann.Vol 8.73% | Sharpe 0.74\n"
+        "7/8 calendar years positive (88%) | 28 drawdowns, 100% recovery rate\n"
+        "Stress tested: COVID -22%, 2022 rate spike -7% (regime protection worked)\n\n"
+        "Status: LIVE on paper account | 5 ETF orders deployed ($66k of $100k)\n"
         "Regime: BULL | SPY +10.9% vs MA200 | VIX 17.0 | Signal: AGGRESSIVE"
     )
     pdf.set_text_color(*BLACK)
