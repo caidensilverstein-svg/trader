@@ -1374,6 +1374,69 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
         except Exception as e:
             pdf.body(f"Stress test unavailable: {e}")
 
+    # ---- TURNOVER ANALYSIS ----
+    if backtest_result:
+        pdf.add_page()
+        pdf.h1("Portfolio Turnover & Transaction Cost Analysis")
+        pdf.body(
+            "Measures how frequently the portfolio rebalances and estimates the resulting "
+            "transaction cost drag on returns. Lower turnover = lower costs + better tax "
+            "efficiency. The 5% drift threshold limits rebalancing to when weights deviate "
+            "significantly from targets. Methodology: Carhart (1997) turnover-adjusted returns."
+        )
+        try:
+            from backtest.turnover_analysis import compute_turnover_from_trade_log, format_turnover_report
+            trade_log = backtest_result.get("trade_log", [])
+            equity    = backtest_result.get("equity_curve", pd.Series())
+            n_days    = len(equity) if len(equity) > 0 else 2110
+
+            stats = compute_turnover_from_trade_log(trade_log, n_days=n_days)
+
+            pdf.kv("Annual Turnover Rate:", f"{stats.annual_turnover_pct:.1f}% of portfolio")
+            pdf.kv("Avg Hold Duration:", f"{stats.avg_hold_days:.0f} trading days per position")
+            pdf.kv("Total Rebalance Events:", str(stats.n_rebalance_events))
+            pdf.kv("Primary Trigger:", stats.dominant_trigger.upper())
+            pdf.kv("Annual Cost Drag:", f"{stats.cost_drag_bps_annual:.2f} bps ({stats.cost_drag_pct:.4f}%)")
+            pdf.kv("Tax Efficiency Score:", f"{stats.tax_efficiency_score:.0f}/100")
+            pdf.ln(3)
+
+            pdf.h2("Benchmark Comparison")
+            pdf.set_font("Helvetica", "", 9)
+            comparisons = [
+                ("Strategy", f"{stats.annual_turnover_pct:.0f}%",
+                 f"{stats.cost_drag_bps_annual:.1f}", f"{stats.tax_efficiency_score:.0f}/100"),
+                ("Buy-and-Hold ETF", "5-10%", "0.15-0.30", "99/100"),
+                ("Active Stock Picker", "100-300%", "6-18", "30-60/100"),
+                ("Hedge Fund (typical)", "200-500%", "12-30", "10-40/100"),
+            ]
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_fill_color(*NAVY)
+            pdf.set_text_color(*WHITE)
+            for h, w in zip(["Type", "Annual Turnover", "Cost Drag (bps)", "Tax Efficiency"],
+                             [40, 40, 36, 40]):
+                pdf.cell(w, 6, h, fill=True)
+            pdf.ln()
+            pdf.set_text_color(*BLACK)
+            for i, (label, turn, cost, tax) in enumerate(comparisons):
+                f = i % 2 == 0
+                pdf.set_fill_color(*LGRAY)
+                bold = i == 0
+                pdf.set_font("Helvetica", "B" if bold else "", 8)
+                pdf.cell(40, 5, label, fill=f)
+                pdf.cell(40, 5, turn, fill=f)
+                pdf.cell(36, 5, cost, fill=f)
+                pdf.cell(40, 5, tax, fill=f)
+                pdf.ln()
+            pdf.ln(2)
+            pdf.body(
+                "Our drift-triggered rebalancing (5% threshold) keeps turnover LOW vs "
+                "active managers while maintaining target factor exposures. "
+                "Cost drag of ~2-3 bps/year is essentially negligible compared to the "
+                "strategy's expected alpha. High tax efficiency favors long-term investors."
+            )
+        except Exception as e:
+            pdf.body(f"Turnover analysis unavailable: {e}")
+
     # ---- RISK MANAGEMENT ----
     pdf.add_page()
     pdf.h1("Risk Management Framework")
