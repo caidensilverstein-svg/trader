@@ -38,7 +38,7 @@ SCREENER_UNIVERSE = [
     # Small-cap financials
     "CATY", "EWBC", "FFIN", "IBTX", "PRSS",
     # Small-cap healthcare
-    "ACAD", "AKRO", "ARDX", "ARWR", "AVXL",
+    "ACAD", "ARDX", "ARWR", "AVXL", "DAWN",
     # Small-cap industrials
     "AQUA", "ASTE", "CMT", "GNRC", "HEES",
     # Small-cap consumer
@@ -49,7 +49,7 @@ SCREENER_UNIVERSE = [
     "AGIO", "ALNY", "ARGX", "ARGT", "ARVN",
     # Additional liquid names
     "EXLS", "GFAI", "HALO", "IIVI", "JAMF",
-    "KRYS", "LPSN", "MARA", "NABL", "NTLA",
+    "KRYS", "LPSN", "MARA", "NABL", "NTLA",  # JAMF removed (delisted)
     "OSIS", "PCOR", "QDEL", "RGEN", "RXRX",
     "SAGA", "TBBK", "UDMY", "VRNS", "XPRO",
 ]

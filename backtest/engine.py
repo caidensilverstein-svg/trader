@@ -76,6 +76,7 @@ def run_backtest(
     initial_capital: float = 100_000.0,
     rebalance_freq: str = "M",   # 'M' = monthly, 'W' = weekly, 'Q' = quarterly
     drift_threshold: float = 0.05,
+    cost_bps: float = 3.0,       # round-trip transaction cost in basis points
 ) -> Dict:
     """
     Run a full historical backtest of the ETF sleeve strategy.
@@ -198,7 +199,11 @@ def run_backtest(
             needs_rebal = max_drift >= drift_threshold
 
             if needs_rebal:
-                # Execute rebalance (no transaction costs modeled -- conservative)
+                # Apply transaction costs: cost_bps bp on gross turnover
+                turnover = sum(abs(current_wts.get(t, 0) - w) for t, w in target_wts.items())
+                cost = portfolio_value * turnover * (cost_bps / 10_000)
+                portfolio_value -= cost  # deduct before rebalancing
+
                 new_holdings = {}
                 for t, wt in target_wts.items():
                     if t in row and not pd.isna(row[t]):
@@ -212,10 +217,12 @@ def run_backtest(
 
                 rebalance_dates.append(str(date.date()))
                 trade_log.append({
-                    "date":   str(date.date()),
-                    "regime": regime,
-                    "bsc":    round(bsc, 3),
-                    "drift":  round(max_drift, 4),
+                    "date":      str(date.date()),
+                    "regime":    regime,
+                    "bsc":       round(bsc, 3),
+                    "drift":     round(max_drift, 4),
+                    "turnover":  round(turnover, 4),
+                    "cost_usd":  round(cost, 2),
                     "target_weights": {k: round(v, 4) for k, v in target_wts.items()},
                 })
 
@@ -232,10 +239,12 @@ def run_backtest(
 
     # --- Performance metrics ---
     summary = _compute_summary(eq_series, spy_curve, trade_log)
-    summary["start"]          = start
-    summary["end"]            = end
+    summary["start"]           = start
+    summary["end"]             = end
     summary["initial_capital"] = initial_capital
     summary["rebalance_count"] = len(trade_log)
+    summary["total_costs_usd"] = round(sum(t.get("cost_usd", 0) for t in trade_log), 2)
+    summary["cost_bps"]        = cost_bps
 
     return {
         "equity_curve": eq_series,
@@ -321,9 +330,12 @@ def format_backtest_report(result: Dict) -> str:
     for regime, count in sorted(s.get("regime_counts", {}).items()):
         lines.append(f"  {regime:<20} {count:>4} rebalances")
 
+    total_costs = s.get("total_costs_usd", 0)
+    cost_bps    = s.get("cost_bps", 3)
     lines += [
         "",
-        f"Annual Alpha vs SPY: {s['alpha_ann']:+.2f}%",
+        f"Annual Alpha vs SPY  : {s['alpha_ann']:+.2f}%",
+        f"Transaction Costs    : ${total_costs:,.2f} total ({cost_bps:.1f} bps/rebalance)",
         "=" * 72,
     ]
     return "\n".join(lines)
