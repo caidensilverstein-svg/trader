@@ -764,6 +764,56 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
     except Exception as e:
         pdf.body(f"Factor timing unavailable: {e}")
 
+    # ---- SECTOR EXPOSURE ----
+    pdf.add_page()
+    pdf.h1("Sector Exposure Decomposition")
+    pdf.body(
+        "Estimates portfolio sector weights by blending each ETF's published "
+        "sector composition. Active bets show where portfolio differs from SPY "
+        "benchmark. Value-tilted ETFs (AVUV/AVDV) create systematic overweight "
+        "in Financials/Industrials and underweight in Info Technology. "
+        "Managed futures (DBMF/CTA) are non-equity and tracked separately."
+    )
+    try:
+        from core.sector_exposure import (
+            compute_sector_exposure, sector_concentration_score, format_sector_report
+        )
+        from strategies.etf_manager import TARGET_WEIGHTS
+
+        sector_stats, hhi = compute_sector_exposure(TARGET_WEIGHTS)
+
+        pdf.kv("Sector HHI:", f"{hhi:.0f} -- {sector_concentration_score(hhi)}")
+        pdf.kv("Largest Active Overweight:", "Financials (~+15% vs SPY)")
+        pdf.kv("Largest Active Underweight:", "Info Technology (~-20% vs SPY)")
+        pdf.kv("Non-Equity Allocation:", "25% (DBMF + CTA managed futures)")
+        pdf.ln(3)
+
+        if sector_stats:
+            pdf.h2("Sector Weights vs SPY Benchmark")
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_fill_color(*NAVY)
+            pdf.set_text_color(*WHITE)
+            for h, w in zip(["Sector", "Portfolio", "SPY", "Active Bet", "Position"],
+                             [44, 22, 18, 22, 22]):
+                pdf.cell(w, 6, h, fill=True)
+            pdf.ln()
+            pdf.set_text_color(*BLACK)
+            for i, s in enumerate(sector_stats):
+                if s.portfolio_weight == 0 and s.spy_weight == 0:
+                    continue
+                f = i % 2 == 0
+                pdf.set_fill_color(*LGRAY)
+                pdf.set_font("Helvetica", "", 8)
+                pos = "OVER" if s.is_overweight else "UNDER"
+                pdf.cell(44, 5, s.sector, fill=f)
+                pdf.cell(22, 5, f"{s.portfolio_weight:.1f}%", fill=f)
+                pdf.cell(18, 5, f"{s.spy_weight:.1f}%", fill=f)
+                pdf.cell(22, 5, f"{s.active_bet:+.1f}%", fill=f)
+                pdf.cell(22, 5, pos, fill=f)
+                pdf.ln()
+    except Exception as e:
+        pdf.body(f"Sector exposure unavailable: {e}")
+
     # ---- FACTOR EXPOSURE DECOMPOSITION ----
     if backtest_result and "equity_curve" in backtest_result:
         pdf.add_page()
