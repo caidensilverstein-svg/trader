@@ -80,6 +80,7 @@ def format_weekly_report(
     pead_status: dict,
     ma_status: dict,
     trade_count: int = 0,
+    perf_metrics: Optional[Dict] = None,
 ) -> str:
     """
     Build the weekly report body (plain ASCII, human readable).
@@ -171,6 +172,7 @@ Closed Trades   : {m_close}
 Win Rate        : {m_wr}%
 Active Deals    : {', '.join(ma_status.get('open_deals', [])) or 'None'}
 
+{_format_perf_section(perf_metrics)}
 ACTIONS THIS WEEK
 -----------------
 Total Trades    : {trade_count}
@@ -186,6 +188,27 @@ Target: $500+/month | System: 4-layer factor + options + PEAD + M&A
 ================================================================================
 """
     return body.strip()
+
+
+def _format_perf_section(metrics: Optional[Dict]) -> str:
+    if not metrics or "error" in metrics:
+        days = metrics.get("n_days", 0) if metrics else 0
+        return (
+            "PERFORMANCE METRICS\n"
+            "-------------------\n"
+            f"Trading Days    : {days}  (need >= 2 days for metrics)\n"
+        )
+    return (
+        "PERFORMANCE METRICS\n"
+        "-------------------\n"
+        f"Total Return    : {metrics['total_return']:>+.2f}%\n"
+        f"Annualized      : {metrics['ann_return']:>+.2f}%\n"
+        f"Volatility (ann): {metrics['ann_vol']:.2f}%\n"
+        f"Sharpe Ratio    : {metrics['sharpe']:.3f}\n"
+        f"Max Drawdown    : {metrics['max_dd']:.2f}%\n"
+        f"Calmar Ratio    : {metrics['calmar']:.3f}  (ann ret / max DD)\n"
+        f"Trading Days    : {metrics['n_days']}\n"
+    )
 
 
 def _format_condor_action(vix, regime):
@@ -221,12 +244,14 @@ def send_weekly_report(
     pead_status: dict,
     ma_status: dict,
     trade_count: int = 0,
+    perf_metrics: Optional[Dict] = None,
     attachments: Optional[List[str]] = None,
 ) -> bool:
     """Send the weekly portfolio report email."""
     body = format_weekly_report(
         regime_data, account_data, etf_status,
         condor_status, pead_status, ma_status, trade_count,
+        perf_metrics=perf_metrics,
     )
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     subject  = f"Portfolio Weekly Report -- {date_str}"

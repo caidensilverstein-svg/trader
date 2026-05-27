@@ -45,6 +45,7 @@ from strategies.ma_monitor import (
 from reporting.email_reporter import (
     send_weekly_report, send_alert, send_progress_update
 )
+from core.equity_tracker import record_equity, get_equity_series, days_tracked
 
 logger = logging.getLogger(__name__)
 
@@ -112,12 +113,17 @@ def run_daily(client: AlpacaClient, om: OrderManager, dry_run: bool = False) -> 
     if cb_level not in ("halt", "reduce"):
         ma_entries = open_ma_positions(om, client, dry_run=dry_run)
 
+    # Record equity snapshot for performance tracking
+    acct_snap = client.get_account()
+    record_equity(acct_snap["equity"], acct_snap["cash"], acct_snap["portfolio_value"])
+
     summary = {
         "ts":            now_utc(),
         "regime":        regime,
         "vix":           vix,
         "circuit":       cb_level,
         "drawdown":      round(dd * 100, 2),
+        "equity":        round(acct_snap["equity"], 2),
         "condor_exits":  len(condor_exits),
         "condor_entry":  condor_entry is not None,
         "pead_exits":    len(pead_exits),
@@ -161,10 +167,18 @@ def run_weekly(client: AlpacaClient, om: OrderManager, dry_run: bool = False) ->
     pead_status   = get_pead_status()
     ma_status     = get_ma_status()
 
+    # Equity snapshot for today
+    record_equity(acct["equity"], acct["cash"], acct["portfolio_value"])
+    equity_series = get_equity_series()
+
     # Count recent trades
     from core.utils import read_trade_log
+    from reporting.performance_tracker import compute_portfolio_metrics
     all_trades  = read_trade_log(config.LOG_FILE)
     week_trades = len([t for t in all_trades if t.get("ts", "")[:10] >= now_utc()[:10]])
+
+    # Compute metrics if we have enough history
+    perf_metrics = compute_portfolio_metrics(equity_series) if len(equity_series) >= 2 else {}
 
     # 5. Send weekly report
     send_weekly_report(
@@ -175,6 +189,7 @@ def run_weekly(client: AlpacaClient, om: OrderManager, dry_run: bool = False) ->
         pead_status=pead_status,
         ma_status=ma_status,
         trade_count=week_trades,
+        perf_metrics=perf_metrics,
     )
 
     summary = {
