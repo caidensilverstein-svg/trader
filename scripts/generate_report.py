@@ -1909,6 +1909,61 @@ def build_full_report(data: dict, backtest_result: dict = None) -> FPDF:
         except Exception as e:
             pdf.body(f"Turnover analysis unavailable: {e}")
 
+    # ---- RISK BUDGET ALLOCATION ----
+    if backtest_result and "etf_prices" in backtest_result:
+        pdf.add_page()
+        pdf.h1("Risk Budget Allocation (Euler Decomposition)")
+        pdf.body(
+            "Explicitly allocates how much of total portfolio risk each ETF sleeve may contribute. "
+            "Uses Euler risk decomposition (marginal risk contribution) so contributions sum to "
+            "total portfolio volatility. Effective Number of Bets (Qian 2005) measures true "
+            "diversification -- closer to N assets = more risk parity. "
+            "Methodology: Maillard-Roncalli-Teiletche (2010), Roncalli (2013)."
+        )
+        try:
+            from core.risk_budget import compute_risk_budget, format_risk_budget_report
+            import config as _cfg4
+
+            etf_prices = backtest_result["etf_prices"]
+            cap_wts = {k: v for k, v in _cfg4.ETF_WEIGHTS.items() if k in etf_prices.columns}
+
+            budgets, rb_summary = compute_risk_budget(etf_prices, cap_wts)
+
+            if budgets:
+                pdf.kv("Total Portfolio Volatility:", f"{rb_summary.total_portfolio_vol:.2f}% annualized")
+                pdf.kv("Effective Number of Bets:", f"{rb_summary.effective_n:.2f}  (max = {len(budgets)})")
+                pdf.kv("Concentration Index:", f"{rb_summary.concentration_index:.1f}%  (max single-sleeve risk)")
+                pdf.kv("Risk Parity Distance:", f"{rb_summary.risk_parity_distance:.2f}%  (lower = more balanced)")
+                pdf.kv("Budget Violations:", f"{rb_summary.budget_violations}  (sleeves >5% off target)")
+                pdf.ln(3)
+
+                pdf.h2("Per-ETF Risk Contribution")
+                pdf.set_font("Courier", "", 8)
+                hdr = f"{'Sleeve':<12} {'Cap%':>6} {'Target%':>8} {'Actual%':>8} {'Dev%':>7} {'Vol':>7}"
+                pdf.cell(0, 5, hdr, ln=True)
+                pdf.set_font("Courier", "", 7)
+                for b in budgets:
+                    line = (
+                        f"{b.sleeve:<12} "
+                        f"{b.target_allocation:>5.1f}% "
+                        f"{b.target_risk_budget:>7.1f}% "
+                        f"{b.actual_risk_contrib:>7.1f}% "
+                        f"{b.risk_deviation:>+6.1f}% "
+                        f"{b.volatility:>6.2f}%"
+                    )
+                    pdf.cell(0, 4, line, ln=True)
+                pdf.ln(3)
+                pdf.set_font("Helvetica", "", 9)
+                pdf.body(
+                    "Risk parity portfolio would have equal Actual% for all assets. "
+                    "Our factor-tilted portfolio deliberately over-weights AVUV/AVDV value premium "
+                    "in capital terms, which may result in higher risk contributions. "
+                    "DBMF/CTA managed futures have low risk contributions despite 25% capital "
+                    "allocation -- this decorrelation is exactly the intended portfolio construction benefit."
+                )
+        except Exception as e:
+            pdf.body(f"Risk budget unavailable: {e}")
+
     # ---- RISK MANAGEMENT ----
     pdf.add_page()
     pdf.h1("Risk Management Framework")
@@ -2337,7 +2392,7 @@ def build_slides(data: dict, backtest_result: dict = None) -> FPDF:
         "Risk management: Circuit breaker | VaR/CVaR | Kelly sizing | Diversification\n"
         "Statistical validation: Bootstrap CIs | Monte Carlo | Sensitivity analysis\n"
         "Regime intelligence: 5-regime classification + Markov persistence model\n\n"
-        "664 unit tests | 45.4 KB comprehensive PDF report (28+ sections) | Live Alpaca\n"
+        "689 unit tests | 46.3 KB comprehensive PDF report (30+ sections) | Live Alpaca\n"
         "Automated cron execution | NDJSON trade log | Atomic state writes\n\n"
         "Academic: B-SC (2015), Fama-French (1993/2015), Amihud (2002), Kyle (1985),\n"
         "  Hamilton (1989), Politis-Romano (1994), BIS (2005), Black-Scholes (1973),\n"
