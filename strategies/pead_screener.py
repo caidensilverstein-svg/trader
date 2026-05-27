@@ -23,6 +23,7 @@ import yfinance as yf
 
 import config
 from core import data as mdata
+from core.kelly import half_kelly_pead
 from core.utils import load_state, save_state, now_utc, append_trade_log
 from execution.alpaca_client import AlpacaClient
 from execution.order_manager import OrderManager
@@ -340,9 +341,12 @@ def open_pead_positions(
             logger.debug("PEAD: %s already in portfolio", ticker)
             continue
 
-        # Position sizing: use composite score to scale between min and max
+        # Position sizing: composite score scales within Kelly-validated range
+        # Kelly half-fraction at default PEAD parameters confirms $5k max is appropriate
+        kelly_max = half_kelly_pead(capital=10_000)  # 10% of $100k per strategy layer
+        effective_max = min(config.PEAD_POSITION_MAX, kelly_max)
         position_size = config.PEAD_POSITION_MIN + (
-            (config.PEAD_POSITION_MAX - config.PEAD_POSITION_MIN) * candidate["composite"]
+            (effective_max - config.PEAD_POSITION_MIN) * candidate["composite"]
         )
         position_size = round(position_size, 2)
 
