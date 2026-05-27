@@ -2485,7 +2485,7 @@ def build_slides(data: dict, backtest_result: dict = None) -> FPDF:
         "Risk management: Circuit breaker | VaR/CVaR | Kelly sizing | Diversification\n"
         "Statistical validation: Bootstrap CIs | Monte Carlo | Sensitivity analysis\n"
         "Regime intelligence: 5-regime classification + Markov persistence model\n\n"
-        "717 unit tests | 48.6 KB comprehensive PDF report (32+ sections) | Live Alpaca\n"
+        "737 unit tests | 49.0 KB comprehensive PDF report (33+ sections) | Live Alpaca\n"
         "Automated cron execution | NDJSON trade log | Atomic state writes\n\n"
         "Academic: B-SC (2015), Fama-French (1993/2015), Amihud (2002), Kyle (1985),\n"
         "  Hamilton (1989), Politis-Romano (1994), BIS (2005), Black-Scholes (1973),\n"
