@@ -23,6 +23,7 @@ from core.utils import load_state, save_state, now_utc, clip
 from core.momentum_timing import spy_time_series_momentum, combined_regime_signal
 from execution.alpaca_client import AlpacaClient
 from execution.order_manager import OrderManager
+from core.factor_timing import compute_etf_momentum, apply_factor_timing
 
 logger = logging.getLogger(__name__)
 
@@ -289,22 +290,30 @@ def run_etf_manager(
     # B-SC scalar
     bsc = compute_bsc_scalar(qmom_prices)
 
-    # Effective weights
+    # Effective weights (B-SC + regime)
     eff_weights = compute_effective_weights(bsc, regime)
 
-    # Rebalance
-    actions = rebalance(om, client, eff_weights, dry_run=dry_run)
+    # Factor timing: adjust individual ETF weights by 6-month momentum
+    etf_prices = {t: mdata.get_price_history(t, "1y") for t in TICKERS}
+    etf_momentum = compute_etf_momentum(etf_prices)
+    timed_weights, ft_multipliers = apply_factor_timing(eff_weights, etf_momentum)
+    logger.info("Factor timing applied: %s", {t: f"{v*100:.1f}%" for t, v in timed_weights.items()})
+
+    # Rebalance using factor-timed weights
+    actions = rebalance(om, client, timed_weights, dry_run=dry_run)
 
     summary = {
         "ts":              now_utc(),
         "regime":          regime,
         "bsc_scalar":      round(bsc, 3),
-        "eff_qmom_wt":     round(eff_weights.get("QMOM", 0) * 100, 1),
+        "eff_qmom_wt":     round(timed_weights.get("QMOM", 0) * 100, 1),
         "vix":             reg["vix"],
         "spy_mom_60d":     reg["spy_mom_60d"],
         "mom_composite":   spy_mom["composite"],
         "mom_signal":      spy_mom["signal"],
         "combined_signal": combined,
+        "etf_momentum":    {t: round(v * 100, 1) for t, v in etf_momentum.items()},
+        "ft_multipliers":  {t: round(v, 2) for t, v in ft_multipliers.items()},
         "actions":         actions,
     }
 
